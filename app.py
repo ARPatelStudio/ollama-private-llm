@@ -13,8 +13,9 @@ import re
 def setup_ollama():
     print("⏳ Checking Ollama Engine...")
     if not os.path.exists("./ollama"):
-        print("📥 Downloading Ollama Linux Binary...")
-        os.system("curl -L https://ollama.com/download/ollama-linux-amd64 -o ollama")
+        print("📥 Downloading Ollama Linux Binary from Official GitHub...")
+        # 🚀 CRITICAL FIX: GitHub se direct binary download kar rahe hain (Fail-Proof)
+        os.system("curl -L https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64 -o ollama")
         os.system("chmod +x ollama")
     
     print("🟢 Starting Ollama Background Service (GPU Mode)...")

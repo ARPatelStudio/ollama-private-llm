@@ -1,336 +1,112 @@
-import json
 import os
 import re
-import stat
-import subprocess
-import sys
-import tarfile
 import time
-from typing import Generator
-
-import gradio as gr
+import subprocess
 import httpx
+import gradio as gr
 
-# ===========================================================================
-# ⚡ AR PATEL STUDIO - CONFIGURATION & CONSTANTS
-# ===========================================================================
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "127.0.0.1:11434")
-OLLAMA_BASE_URL = f"http://{OLLAMA_HOST}"
-TARGET_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
+# ==========================================
+# ⚡ AR PATEL STUDIO - PRIVATE GPU LLM (OLLAMA)
+# ==========================================
 
-INSTALL_DIR = os.path.expanduser("~/.ollama_bin")
-OLLAMA_BIN = os.path.join(INSTALL_DIR, "bin", "ollama")
-OLLAMA_ZST = "/tmp/ollama-linux-amd64.tar.zst"
-DOWNLOAD_URL = "https://ollama.com/download/ollama-linux-amd64.tar.zst"
-
-# 🛡️ AR PATEL STUDIO MILITARY-GRADE SECURITY GATEWAY
+OLLAMA_HOST = "http://127.0.0.1:11434"
+MODEL_NAME = "qwen2.5:3b"
 API_KEY = os.environ.get("ARPATEL_API_KEY", "fallback_key_123")
 
 
-# ===========================================================================
-# 1. 🚀 DOWNLOAD & START OLLAMA ENGINE ON GPU
-# ===========================================================================
-def ensure_ollama_binary() -> None:
-    """Download and extract the official Ollama Linux AMD64 ZST bundle."""
-    if os.path.exists(OLLAMA_BIN) and os.access(OLLAMA_BIN, os.X_OK):
-        print("✅ Ollama binary already installed.")
-        return
-
+def setup_ollama():
     print("⏳ Checking Ollama Engine...")
-    print("📥 Downloading official Ollama Linux Engine (.tar.zst)...")
-
-    os.makedirs(INSTALL_DIR, exist_ok=True)
-
-    # Prefer curl for large downloads. It follows the official Ollama redirect.
-    if not os.path.exists(OLLAMA_ZST):
-        subprocess.run(
-            [
-                "curl",
-                "--fail",
-                "--location",
-                "--retry", "5",
-                "--retry-delay", "3",
-                "--connect-timeout", "30",
-                "--max-time", "1800",
-                "--output", OLLAMA_ZST,
-                DOWNLOAD_URL,
-            ],
-            check=True,
-        )
-
-    file_size_mb = os.path.getsize(OLLAMA_ZST) / (1024 * 1024)
-    if file_size_mb < 100:
-        raise RuntimeError(
-            f"Downloaded Ollama archive looks invalid/incomplete: "
-            f"{file_size_mb:.2f} MB"
-        )
-
-    # zstandard is needed because the current Ollama Linux bundle is .tar.zst.
-    try:
-        import zstandard as zstd
-    except ImportError:
-        print("📦 Installing Python 'zstandard' package...")
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--no-cache-dir", "zstandard"]
-        )
-        import zstandard as zstd
-
-    print(
-        f"📦 Unpacking Ollama engine ({file_size_mb:.1f} MB)... "
-        "This may take a moment."
-    )
-
-    dctx = zstd.ZstdDecompressor()
-    with open(OLLAMA_ZST, "rb") as ifh:
-        with dctx.stream_reader(ifh) as reader:
-            with tarfile.open(fileobj=reader, mode="r|") as tar:
-                tar.extractall(path=INSTALL_DIR)
-
-    if os.path.exists(OLLAMA_ZST):
-        os.remove(OLLAMA_ZST)
-
-    if not os.path.exists(OLLAMA_BIN):
-        raise RuntimeError(
-            f"Ollama archive extracted, but binary was not found at: {OLLAMA_BIN}"
-        )
-
-    current_mode = os.stat(OLLAMA_BIN).st_mode
-    os.chmod(
-        OLLAMA_BIN,
-        current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH,
-    )
-
-    print("✅ Ollama binary verified and ready.")
-
-def start_ollama_daemon() -> subprocess.Popen:
-    """Spawns Ollama daemon as a non-blocking background process."""
-    ensure_ollama_binary()
-
-    env = os.environ.copy()
-    env["OLLAMA_HOST"] = OLLAMA_HOST
+    if not os.path.exists("./ollama"):
+        print("📥 Downloading Ollama Linux Binary...")
+        os.system("curl -L https://ollama.com/download/ollama-linux-amd64 -o ollama")
+        os.system("chmod +x ollama")
 
     print("🟢 Starting Ollama Background Service (GPU Mode)...")
-    process = subprocess.Popen(
-        [OLLAMA_BIN, "serve"],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.STDOUT
-    )
-    return process
+    subprocess.Popen(["./ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # Wait until the local API is actually up
+    for i in range(30):
+        try:
+            r = httpx.get(f"{OLLAMA_HOST}/api/version", timeout=2.0)
+            if r.status_code == 200:
+                print(f"✅ Engine Ready (version {r.json().get('version', '?')})")
+                break
+        except Exception:
+            time.sleep(1)
+    else:
+        print("⚠️ Ollama did not respond in time — continuing anyway")
+
+    print(f"🧠 Pulling AI Model ({MODEL_NAME})... Please wait.")
+    os.system(f"./ollama pull {MODEL_NAME}")
+    print("✅ Engine Ready & Loaded on GPU!")
 
 
-def wait_for_ollama_ready(timeout_seconds: float = 60.0) -> None:
-    """Actively polls the engine health endpoint until ready."""
-    print("⏳ Probing Ollama service health...")
-    start_time = time.time()
-    endpoint = f"{OLLAMA_BASE_URL}/api/version"
-
-    with httpx.Client(timeout=2.0) as client:
-        while time.time() - start_time < timeout_seconds:
-            try:
-                response = client.get(endpoint)
-                if response.status_code == 200:
-                    version_info = response.json().get("version", "unknown")
-                    print(f"✅ Engine Ready & Loaded on GPU (version {version_info}) in {time.time() - start_time:.1f}s!")
-                    return
-            except (httpx.ConnectError, httpx.TimeoutException):
-                pass
-            time.sleep(0.5)
-
-    raise TimeoutError(f"Ollama server failed to start within {timeout_seconds} seconds.")
-
-
-def is_model_cached(client: httpx.Client, model_name: str) -> bool:
-    """Checks whether the requested model is already downloaded."""
-    try:
-        response = client.get(f"{OLLAMA_BASE_URL}/api/tags")
-        if response.status_code == 200:
-            models = response.json().get("models", [])
-            for item in models:
-                name = item.get("name", "")
-                if name == model_name or name.startswith(f"{model_name}:"):
-                    return True
-    except Exception:
-        return False
-    return False
-
-
-def pull_model_if_missing(model_name: str) -> None:
-    """Pulls the model with real-time stream logs if missing from cache."""
-    with httpx.Client(timeout=None) as client:
-        if is_model_cached(client, model_name):
-            print(f"⚡ Model '{model_name}' is already cached. Skipping pull.")
-            return
-
-        print(f"🧠 Pulling AI Model ({model_name})... Please wait.")
-        payload = {"name": model_name, "stream": True}
-
-        with client.stream("POST", f"{OLLAMA_BASE_URL}/api/pull", json=payload) as stream_response:
-            if stream_response.status_code != 200:
-                raise RuntimeError(f"Failed to initiate pull: HTTP {stream_response.status_code}")
-
-            last_status = ""
-            for line in stream_response.iter_lines():
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                    status = event.get("status", "")
-                    total = event.get("total", 0)
-                    completed = event.get("completed", 0)
-
-                    if total > 0:
-                        percent = (completed / total) * 100
-                        print(f"\r⏳ {status}: {percent:.1f}%", end="", flush=True)
-                    elif status != last_status:
-                        print(f"\n⚡ Status: {status}", flush=True)
-                        last_status = status
-                except json.JSONDecodeError:
-                    continue
-
-        print(f"\n✅ Model '{model_name}' Ready & Loaded on GPU!")
-
-
-def setup_ollama() -> None:
-    """Unified engine manager: extract, launch daemon, wait, and pull weights."""
-    start_ollama_daemon()
-    wait_for_ollama_ready(timeout_seconds=60.0)
-    pull_model_if_missing(TARGET_MODEL)
-
-
-# Ignite the Engine when Space starts
-print(f"🔧 Ollama download URL: {DOWNLOAD_URL}")
-print(f"🔧 Ollama binary path: {OLLAMA_BIN}")
-print(f"🔧 Target model: {TARGET_MODEL}")
 setup_ollama()
 
 
-# ===========================================================================
-# 2. 🛡️ MILITARY-GRADE SECURITY GATEWAY & JARVIS ROUTING
-# ===========================================================================
-def jarvis_chat_api(api_key: str, system_prompt: str, user_message: str) -> str:
-    """Internal Jarvis API handler with authentication and <think> tag removal."""
-    # Security Gate
+def jarvis_chat_api(api_key, system_prompt, user_message):
     if api_key != API_KEY:
         return "🚨 ERROR: Unauthorized! Access Denied by AR Patel Security."
 
-    # Payload for Ollama Engine
+    if not (user_message or "").strip():
+        return "⚠️ Empty message."
+
     payload = {
-        "model": TARGET_MODEL,
+        "model": MODEL_NAME,
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
+            {"role": "system", "content": system_prompt or "You are a helpful assistant."},
+            {"role": "user", "content": user_message},
         ],
         "stream": False,
         "options": {
             "temperature": 0.7,
-            "num_ctx": 4096  # Large context window for history
-        }
+            "num_ctx": 4096,
+        },
     }
 
     try:
-        # Hit local Ollama engine hosted on HF
-        response = httpx.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload, timeout=120.0)
+        response = httpx.post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=120.0)
         if response.status_code == 200:
             result = response.json().get("message", {}).get("content", "")
-            # Remove any <think> tags completely
-            clean_result = re.sub(r"<think>.*?</think>", "", result, flags=re.DOTALL).strip()
-            return clean_result
-        else:
-            return f"🚨 Engine Error: {response.text}"
+            return re.sub(r"<think>.*?</think>", "", result, flags=re.DOTALL).strip()
+        return f"🚨 Engine Error: {response.text}"
     except Exception as e:
         return f"🚨 Exception: {str(e)}"
 
 
-def stream_chat_interactive(
-    message: str,
-    history: list[dict[str, str]]
-) -> Generator[str, None, None]:
-    """Provides real-time token streaming for the UI test bench."""
-    messages = [{"role": "system", "content": "Tum Jarvis ho, Amit Patel ke assistant."}]
-
-    for entry in history:
-        messages.append({"role": entry["role"], "content": entry["content"]})
-
-    messages.append({"role": "user", "content": message})
-
-    payload = {
-        "model": TARGET_MODEL,
-        "messages": messages,
-        "stream": True,
-        "options": {
-            "temperature": 0.7,
-            "num_ctx": 4096
-        }
-    }
-
-    full_response = ""
-    try:
-        with httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
-            with client.stream("POST", f"{OLLAMA_BASE_URL}/api/chat", json=payload) as response:
-                if response.status_code != 200:
-                    yield f"⚠️ Engine Error (HTTP {response.status_code}): {response.read().decode('utf-8')}"
-                    return
-
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    try:
-                        chunk = json.loads(line)
-                        token = chunk.get("message", {}).get("content", "")
-                        full_response += token
-                        # Filter out think tags from streaming output
-                        display_text = re.sub(r"<think>.*?</think>", "", full_response, flags=re.DOTALL)
-                        if "<think>" in display_text:
-                            display_text = display_text.split("<think>")[0]
-                        yield display_text.strip()
-                    except json.JSONDecodeError:
-                        continue
-    except Exception as exc:
-        yield f"🚨 Stream Error: {str(exc)}"
-
-
-# ===========================================================================
-# 3. 🎨 GRADIO UI & API EXPOSURE
-# ===========================================================================
-with gr.Blocks(theme=gr.themes.Monochrome(), title="AR PATEL STUDIO - GPU Private LLM") as demo:
+with gr.Blocks() as demo:
     gr.Markdown("# ⚡ AR PATEL STUDIO - GPU Private LLM")
     gr.Markdown("⚠️ *Strictly for internal Jarvis routing. Unauthorized access will be blocked.*")
 
-    with gr.Tabs():
-        # Tab 1: Direct Jarvis Security Gateway (Maintains API Name 'chat')
-        with gr.Tab("🛡️ Jarvis Command Console (API)"):
-            with gr.Row():
-                key_input = gr.Textbox(label="Security Key", type="password", placeholder="Enter ARPATEL_API_KEY")
+    key_input = gr.Textbox(
+        label="Security Key",
+        type="password",
+        placeholder="Enter ARPATEL_API_KEY",
+    )
+    sys_input = gr.Textbox(
+        label="System Persona",
+        lines=3,
+        value="Tum Jarvis ho, Amit Patel ke assistant.",
+    )
+    user_input = gr.Textbox(
+        label="User Message",
+        lines=3,
+        placeholder="Command here...",
+    )
+    output_box = gr.Textbox(label="Jarvis Response", lines=5)
+    btn = gr.Button("🧠 Process Command", variant="primary")
 
-            with gr.Row():
-                sys_input = gr.Textbox(label="System Persona", lines=3, value="Tum Jarvis ho, Amit Patel ke assistant.")
-                user_input = gr.Textbox(label="User Message", lines=3, placeholder="Command here...")
+    btn.click(
+        fn=jarvis_chat_api,
+        inputs=[key_input, sys_input, user_input],
+        outputs=output_box,
+        api_name="chat",
+    )
 
-            output_box = gr.Textbox(label="Jarvis Response", lines=5)
-            btn = gr.Button("🧠 Process Command", variant="primary")
-
-            # Preserves the exact /api/chat endpoint for external Jarvis automation
-            btn.click(
-                fn=jarvis_chat_api,
-                inputs=[key_input, sys_input, user_input],
-                outputs=output_box,
-                api_name="chat"
-            )
-
-        # Tab 2: Real-Time Streaming Interactive Chat
-        with gr.Tab("💬 Interactive Chat Interface"):
-            gr.ChatInterface(
-                fn=stream_chat_interactive,
-                type="messages",
-                title=f"Jarvis Interactive Interface ({TARGET_MODEL})",
-                description="Direct GPU-accelerated chat test bench with streaming token generation.",
-                autofocus=False,
-            )
 
 if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
-        show_api=True
+        theme=gr.themes.Monochrome(),
     )

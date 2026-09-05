@@ -1,3 +1,4 @@
 gradio
 httpx
 huggingface_hub
+spaces

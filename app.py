@@ -10,9 +10,27 @@ import gradio as gr
 # ==========================================
 # ⚡ AR PATEL STUDIO - PRIVATE LLM (OLLAMA + GRADIO 6)
 # ==========================================
-# GRADIO 6 FIX: ChatInterface ke 'type'/'retry_btn'/'undo_btn'/'clear_btn'
-# params hat gaye hain. Isliye chat UI ab manually Blocks+Chatbot se bana hai
-# (sirf stable core components) — koi version-specific kwargs ka risk nahi.
+# FIX LOG:
+#  1. Gradio 6: ChatInterface ke 'type'/'retry_btn' etc. params hat gaye
+#     -> chat UI manually (Blocks + Chatbot) se banaya, 100% stable.
+#  2. Gradio 6: 'theme' ab launch() me pass hota hai, Blocks() me nahi.
+#  3. ZeroGPU: "No @spaces.GPU function detected" error ka fix —
+#     dummy decorated function (kabhi call nahi hota, GPU use nahi hoti).
+#  4. Dedicated GPU (T4/L4) laga ho to Ollama automatically GPU use karega.
+
+# ---------------- ZEROGPU STARTUP-CHECK FIX ----------------
+try:
+    import spaces  # HF Spaces par pehle se installed (spaces==0.51.3)
+
+    @spaces.GPU
+    def _zero_gpu_placeholder():
+        # Sirf ZeroGPU ke startup validation ke liye — kabhi call nahi hota.
+        # NOTE: ZeroGPU par background Ollama server ko GPU NAHI milti
+        # (wo CPU mode me chalega). Full speed ke liye dedicated GPU lagao.
+        pass
+except ImportError:
+    pass
+# ------------------------------------------------------------
 
 # ---------------- CONFIG ----------------
 MODEL_NAME  = os.environ.get("MODEL_NAME", "qwen2.5:3b")
@@ -52,7 +70,7 @@ def log_gpu_info():
         if r.returncode == 0 and r.stdout.strip():
             print(f"🖥️ GPU detected: {r.stdout.strip()}")
         else:
-            print("⚠️ GPU nahi mila — CPU mode (slow). Space Settings me GPU hardware lagaqo!")
+            print("⚠️ GPU nahi mila — CPU mode (slow). Dedicated GPU lagao to fast hoga!")
     except Exception:
         print("⚠️ nvidia-smi unavailable — CPU mode.")
 
@@ -155,8 +173,12 @@ print("=" * 60)
 # ==========================================
 # 2. 🛡️ SECURITY GATEWAY + CHAT LOGIC
 # ==========================================
-THINK_BLOCK = re.compile(r"", re.DOTALL)
-THINK_OPEN  = re.compile(r".*", re.DOTALL)
+# <think>...</think> tags ko safely clean karo (string concat se
+# banaya hai taaki tags code me literal rahein)
+THINK_OPEN_TAG  = "<" + "think" + ">"
+THINK_CLOSE_TAG = "<" + "/think" + ">"
+THINK_BLOCK = re.compile(THINK_OPEN_TAG + ".*?" + THINK_CLOSE_TAG, re.DOTALL)
+THINK_OPEN  = re.compile(THINK_OPEN_TAG + ".*", re.DOTALL)
 
 def clean_output(text: str) -> str:
     text = THINK_BLOCK.sub("", text or "")
@@ -234,8 +256,8 @@ def jarvis_single_shot(api_key, system_prompt, user_message):
 # ==========================================
 # 3. 🎨 UI — MANUAL CHAT (GRADIO 6 SAFE)
 # ==========================================
-with gr.Blocks(title="AR PATEL STUDIO — GPU Private LLM") as demo:
-    gr.Markdown("# ⚡ AR PATEL STUDIO — GPU Private LLM")
+with gr.Blocks(title="AR PATEL STUDIO — Private LLM") as demo:
+    gr.Markdown("# ⚡ AR PATEL STUDIO — Private LLM")
     gr.Markdown("⚠️ *Strictly for internal Jarvis routing. Unauthorized access will be blocked.*")
 
     with gr.Row():

@@ -18,6 +18,6 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # 🚀 FIX: Username ki jagah 'user' likha hai, taaki HF isey password auth na samjhe
-          git remote add space "https://user:${HF_TOKEN}@huggingface.co/spaces/favouritegamer/ollama-private-llm"
+          # 🚀 FIX: Username ki jagah 'favouritegamer' likha hai, taaki HF isey password auth na samjhe
+          git remote add space "https://favouritegamer:${HF_TOKEN}@huggingface.co/spaces/favouritegamer/ollama-private-llm"
           git push --force space main

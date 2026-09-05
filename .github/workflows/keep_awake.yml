@@ -1,0 +1,16 @@
+name: Anti-Sleep Protocol
+
+on:
+  schedule:
+    - cron: "*/15 * * * *" # Har 15 minute mein trigger hoga
+  workflow_dispatch:
+
+jobs:
+  ping-space:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Ollama Engine
+        run: |
+          echo "Waking up Ollama Private LLM..."
+          curl -s https://favouritegamer-ollama-private-llm.hf.space > /dev/null
+          echo "Ping successful!"

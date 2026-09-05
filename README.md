@@ -1,13 +1,13 @@
 ---
-title: ollama-private-llm
-emoji: 🚀
+title: Jarvis Private LLM
+emoji: 🧠
 colorFrom: blue
-colorTo: indigo
+colorTo: red
 sdk: gradio
-sdk_version: "4.44.1"
+sdk_version: 4.44.1
 app_file: app.py
 pinned: false
 ---
 
-# J.A.R.V.I.S. Omni-Core System
-Developed by **AR PATEL STUDIO**
+# ⚡ AR PATEL STUDIO - OLLAMA CLOUD ENGINE
+This is a secure Private LLM engine running on Hugging Face ZeroGPU.

@@ -18,5 +18,5 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          git remote add space "https://favouritegamer:${HF_TOKEN}@huggingface.co/spaces/favouritegamer/ollama-private-llm"
+          git push --force https://favouritegamer:${HF_TOKEN}@huggingface.co/spaces/favouritegamer/ollama-private-llm"
           git push --force space main

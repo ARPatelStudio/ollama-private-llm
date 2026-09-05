@@ -6,7 +6,6 @@ import subprocess
 import sys
 import tarfile
 import time
-import urllib.request
 from typing import Generator
 
 import gradio as gr
@@ -17,13 +16,12 @@ import httpx
 # ===========================================================================
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "127.0.0.1:11434")
 OLLAMA_BASE_URL = f"http://{OLLAMA_HOST}"
-OPENAI_COMPATIBLE_URL = f"{OLLAMA_BASE_URL}/v1/chat/completions"
 TARGET_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 
 INSTALL_DIR = os.path.expanduser("~/.ollama_bin")
 OLLAMA_BIN = os.path.join(INSTALL_DIR, "bin", "ollama")
-OLLAMA_TGZ = "/tmp/ollama-linux-amd64.tgz"
-DOWNLOAD_URL = "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64.tgz"
+OLLAMA_ZST = "/tmp/ollama-linux-amd64.tar.zst"
+DOWNLOAD_URL = "https://ollama.com/download/ollama-linux-amd64.tar.zst"
 
 # 🛡️ AR PATEL STUDIO MILITARY-GRADE SECURITY GATEWAY
 API_KEY = os.environ.get("ARPATEL_API_KEY", "fallback_key_123")
@@ -33,33 +31,44 @@ API_KEY = os.environ.get("ARPATEL_API_KEY", "fallback_key_123")
 # 1. 🚀 DOWNLOAD & START OLLAMA ENGINE ON GPU
 # ===========================================================================
 def ensure_ollama_binary() -> None:
-    """Downloads and extracts the official Ollama bundle if not present."""
+    """Downloads and extracts the official Ollama ZST bundle if not present."""
     if os.path.exists(OLLAMA_BIN):
         return
 
     print("⏳ Checking Ollama Engine...")
-    print("📥 Downloading official Ollama Linux Binary...")
+    
+    # 1. Ensure Zstandard is installed for decompression
+    try:
+        import zstandard as zstd
+    except ImportError:
+        print("📦 Installing 'zstandard' required for Ollama's new .tar.zst format...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "zstandard"])
+        import zstandard as zstd
+
+    print("📥 Downloading official Ollama Linux Engine (ZST)...")
     os.makedirs(INSTALL_DIR, exist_ok=True)
 
-    request = urllib.request.Request(
-        DOWNLOAD_URL,
-        headers={"User-Agent": "AR-Patel-Studio-Provisioner/1.0"}
-    )
-    with urllib.request.urlopen(request) as response, open(OLLAMA_TGZ, "wb") as archive_out:
-        archive_out.write(response.read())
+    # 2. Robust download using curl for large binaries (>1GB with GPU libs)
+    if not os.path.exists(OLLAMA_ZST):
+        subprocess.run(["curl", "-L", "-f", "-o", OLLAMA_ZST, DOWNLOAD_URL], check=True)
 
-    file_size_mb = os.path.getsize(OLLAMA_TGZ) / (1024 * 1024)
-    if file_size_mb < 5:
+    file_size_mb = os.path.getsize(OLLAMA_ZST) / (1024 * 1024)
+    if file_size_mb < 100:
         raise RuntimeError(
-            f"Binary payload corrupted or invalid redirect ({file_size_mb:.2f} MB)."
+            f"Binary payload corrupted or incomplete ({file_size_mb:.2f} MB)."
         )
 
-    print(f"📦 Unpacking Ollama bundle ({file_size_mb:.1f} MB)...")
-    with tarfile.open(OLLAMA_TGZ, "r:gz") as archive:
-        archive.extractall(path=INSTALL_DIR)
+    print(f"📦 Unpacking Ollama engine ({file_size_mb:.1f} MB)... This may take a moment.")
+    
+    # 3. Stream decompress the .tar.zst file natively in Python
+    dctx = zstd.ZstdDecompressor()
+    with open(OLLAMA_ZST, "rb") as ifh:
+        with dctx.stream_reader(ifh) as reader:
+            with tarfile.open(fileobj=reader, mode="r|") as tar:
+                tar.extractall(path=INSTALL_DIR)
 
-    if os.path.exists(OLLAMA_TGZ):
-        os.remove(OLLAMA_TGZ)
+    if os.path.exists(OLLAMA_ZST):
+        os.remove(OLLAMA_ZST)
 
     # Make executable (chmod +x)
     current_mode = os.stat(OLLAMA_BIN).st_mode
@@ -84,7 +93,7 @@ def start_ollama_daemon() -> subprocess.Popen:
     return process
 
 
-def wait_for_ollama_ready(timeout_seconds: float = 30.0) -> None:
+def wait_for_ollama_ready(timeout_seconds: float = 60.0) -> None:
     """Actively polls the engine health endpoint until ready."""
     print("⏳ Probing Ollama service health...")
     start_time = time.time()
@@ -159,7 +168,7 @@ def pull_model_if_missing(model_name: str) -> None:
 def setup_ollama() -> None:
     """Unified engine manager: extract, launch daemon, wait, and pull weights."""
     start_ollama_daemon()
-    wait_for_ollama_ready(timeout_seconds=30.0)
+    wait_for_ollama_ready(timeout_seconds=60.0)
     pull_model_if_missing(TARGET_MODEL)
 
 
